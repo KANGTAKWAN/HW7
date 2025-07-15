@@ -23,6 +23,7 @@ AMyPawn::AMyPawn()
 	CapsuleComp->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Block);
 	CapsuleComp->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 	CapsuleComp->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap); // 다른 Pawn은 겹침
+	CapsuleComp->SetSimulatePhysics(false);
 
 	// 스켈레탈 메시 컴포넌트
 	SkeletalMeshComp = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("SkeletalMeshComp"));
@@ -34,14 +35,12 @@ AMyPawn::AMyPawn()
 	SpringArmComp = CreateDefaultSubobject<USpringArmComponent>(TEXT("SpringArmComp"));
 	SpringArmComp->SetupAttachment(CapsuleComp);
 	SpringArmComp->TargetArmLength = 300.0f;
-	SpringArmComp->bUsePawnControlRotation = true;
+	SpringArmComp->bUsePawnControlRotation = false;
 
 	// 카메라 컴포넌트
 	CameraComp = CreateDefaultSubobject<UCameraComponent>(TEXT("CameraComp"));
 	CameraComp->SetupAttachment(SpringArmComp);
 	CameraComp->bUsePawnControlRotation = false;
-
-	bUseControllerRotationYaw = true;
 
 	static ConstructorHelpers::FObjectFinder<USkeletalMesh> MeshAsset(TEXT("/Game/Resources/Characters/Meshes/SKM_Manny_Simple.SKM_Manny_Simple"));
 	if (MeshAsset.Succeeded())
@@ -49,7 +48,7 @@ AMyPawn::AMyPawn()
 		SkeletalMeshComp->SetSkeletalMesh(MeshAsset.Object);
 	}
 	AutoPossessPlayer = EAutoReceiveInput::Player0;
-	MovementComp = CreateDefaultSubobject<UFloatingPawnMovement>(TEXT("MovementComp"));
+
 }
 void AMyPawn::BeginPlay()
 {
@@ -84,30 +83,43 @@ void AMyPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 void AMyPawn::Move(const FInputActionValue& Value)
 {
 	FVector2D MovementVector = Value.Get<FVector2D>();
-	if (Controller && MovementVector != FVector2D::ZeroVector)
+	if (!MovementVector.IsNearlyZero())
 	{
-		// 메쉬가 -90도 회전했기 때문에 이동 방향을 90도 보정
-		const FRotator Rotation = FRotator(0, -90.f, 0); // 오른쪽을 앞쪽으로 바꿈
+		// 이동 속도 (cm/s)
+		const float MoveSpeed = 300.f;
 
-		// 현재 Forward, Right 벡터를 계산
-		const FVector Forward = Rotation.RotateVector(GetActorForwardVector());
-		const FVector Right = -Rotation.RotateVector(GetActorRightVector());
+		// DeltaTime 얻기
+		float DeltaTime = GetWorld()->GetDeltaSeconds();
 
-		// 부호 반전 (앞뒤 좌우 모두 반전)
-		const FVector ReversedForward = -Forward;
-		const FVector ReversedRight = -Right;
+		// 이동 벡터를 로컬 좌표계로 변환 (X: 앞뒤, Y: 좌우)
+		FVector MoveDirection = FVector(MovementVector.X, MovementVector.Y, 0.f);
 
-		AddMovementInput(ReversedForward, MovementVector.Y);
-		AddMovementInput(ReversedRight, MovementVector.X);
+		// 실제 이동량
+		FVector DeltaLocation = MoveDirection * MoveSpeed *DeltaTime;
+
+		// 충돌 고려하며 위치 변경
+		AddActorLocalOffset(DeltaLocation, false);
+
 	}
 }
 void AMyPawn::Look(const FInputActionValue& Value)
 {
-	FVector2D LookAxisVector = Value.Get<FVector2D>();
-
-	if (Controller)
+	FVector2D LookVector = Value.Get<FVector2D>();
+	if (!LookVector.IsNearlyZero())
 	{
-		AddControllerYawInput(LookAxisVector.X);     // 좌우 회전
-		AddControllerPitchInput(LookAxisVector.Y);   // 위아래 회전
+		const float RotationSpeed = 90.f;
+		float DeltaTime = GetWorld()->GetDeltaSeconds();
+
+		// 좌우 회전 (Yaw)
+		FRotator YawRotation(0.f, LookVector.X * RotationSpeed * DeltaTime, 0.f);
+		AddActorLocalRotation(YawRotation);
+
+		// 상하 회전 (Pitch)
+		if (SpringArmComp)
+		{
+			FRotator SpringArmRotation = SpringArmComp->GetRelativeRotation();
+			SpringArmRotation.Pitch = FMath::Clamp(SpringArmRotation.Pitch - LookVector.Y * RotationSpeed * DeltaTime, -80.f, 80.f);
+			SpringArmComp->SetRelativeRotation(SpringArmRotation);
+		}
 	}
 }
